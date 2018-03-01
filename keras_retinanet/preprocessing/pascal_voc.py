@@ -14,15 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from keras_retinanet.preprocessing.generator import Generator
+from ..preprocessing.generator import Generator
+from ..utils.image import read_image_bgr
 
-import cv2
 import os
 import numpy as np
 from six import raise_from
 from PIL import Image
 
-import cv2
 try:
     import xml.etree.cElementTree as ET
 except ImportError:
@@ -72,7 +71,6 @@ class PascalVocGenerator(Generator):
         self,
         data_dir,
         set_name,
-        image_data_generator,
         classes=voc_classes,
         image_extension='.jpg',
         skip_truncated=False,
@@ -82,7 +80,7 @@ class PascalVocGenerator(Generator):
         self.data_dir             = data_dir
         self.set_name             = set_name
         self.classes              = classes
-        self.image_names          = [l.strip() for l in open(os.path.join(data_dir, 'ImageSets', 'Main', set_name + '.txt')).readlines()]
+        self.image_names          = [l.strip().split(None, 1)[0] for l in open(os.path.join(data_dir, 'ImageSets', 'Main', set_name + '.txt')).readlines()]
         self.image_extension      = image_extension
         self.skip_truncated       = skip_truncated
         self.skip_difficult       = skip_difficult
@@ -91,7 +89,7 @@ class PascalVocGenerator(Generator):
         for key, value in self.classes.items():
             self.labels[value] = key
 
-        super(PascalVocGenerator, self).__init__(image_data_generator, **kwargs)
+        super(PascalVocGenerator, self).__init__(**kwargs)
 
     def size(self):
         return len(self.image_names)
@@ -112,7 +110,7 @@ class PascalVocGenerator(Generator):
 
     def load_image(self, image_index):
         path = os.path.join(self.data_dir, 'JPEGImages', self.image_names[image_index] + self.image_extension)
-        return cv2.imread(path)
+        return read_image_bgr(path)
 
     def __parse_annotation(self, element):
         truncated = _findNode(element, 'truncated', parse=int)

@@ -14,31 +14,92 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import warnings
+
 import keras
 import keras_resnet
 import keras_resnet.models
-import keras_retinanet.models.retinanet
+from ..models import retinanet
 
-WEIGHTS_PATH_NO_TOP = 'https://github.com/fizyr/keras-models/releases/download/v0.0.1/ResNet-50-model.keras.h5'
+resnet_filename = 'ResNet-{}-model.keras.h5'
+resnet_resource = 'https://github.com/fizyr/keras-models/releases/download/v0.0.1/{}'.format(resnet_filename)
 
-custom_objects = keras_retinanet.models.retinanet.custom_objects.copy()
+custom_objects = retinanet.custom_objects.copy()
 custom_objects.update(keras_resnet.custom_objects)
 
+allowed_backbones = ['resnet50', 'resnet101', 'resnet152']
 
-def ResNet50RetinaNet(inputs, weights='imagenet', *args, **kwargs):
-    image = inputs
 
-    # load pretrained imagenet weights?
-    if weights == 'imagenet':
-        weights_path = keras.applications.imagenet_utils.get_file(
-            'ResNet-50-model.keras.h5',
-            WEIGHTS_PATH_NO_TOP, cache_subdir='models', md5_hash='1e511c75e9ab5c16900652ad1f6044ce'
-        )
-    else:
-        weights_path = weights
+def download_imagenet(backbone):
+    validate_backbone(backbone)
 
-    resnet = keras_resnet.models.ResNet50(image, include_top=False, freeze_bn=True)
+    backbone = int(backbone.replace('resnet', ''))
 
-    model = keras_retinanet.models.retinanet.retinanet_bbox(inputs=inputs, backbone=resnet, *args, **kwargs)
-    model.load_weights(weights_path, by_name=True)
+    filename = resnet_filename.format(backbone)
+    resource = resnet_resource.format(backbone)
+    if backbone == 50:
+        checksum = '3e9f4e4f77bbe2c9bec13b53ee1c2319'
+    elif backbone == 101:
+        checksum = '05dc86924389e5b401a9ea0348a3213c'
+    elif backbone == 152:
+        checksum = '6ee11ef2b135592f8031058820bb9e71'
+
+    return keras.applications.imagenet_utils.get_file(
+        filename,
+        resource,
+        cache_subdir='models',
+        md5_hash=checksum
+    )
+
+
+def validate_backbone(backbone):
+    if backbone not in allowed_backbones:
+        raise ValueError('Backbone (\'{}\') not in allowed backbones ({}).'.format(backbone, allowed_backbones))
+
+
+def resnet_retinanet(num_classes, backbone='resnet50', inputs=None, **kwargs):
+    validate_backbone(backbone)
+
+    # choose default input
+    if inputs is None:
+        inputs = keras.layers.Input(shape=(None, None, 3))
+
+    # create the resnet backbone
+    if backbone == 'resnet50':
+        resnet = keras_resnet.models.ResNet50(inputs, include_top=False, freeze_bn=True)
+    elif backbone == 'resnet101':
+        resnet = keras_resnet.models.ResNet101(inputs, include_top=False, freeze_bn=True)
+    elif backbone == 'resnet152':
+        resnet = keras_resnet.models.ResNet152(inputs, include_top=False, freeze_bn=True)
+
+    # create the full model
+    model = retinanet.retinanet_bbox(inputs=inputs, num_classes=num_classes, backbone=resnet, **kwargs)
+
     return model
+
+
+def resnet50_retinanet(num_classes, inputs=None, **kwargs):
+    return resnet_retinanet(num_classes=num_classes, backbone='resnet50', inputs=inputs, **kwargs)
+
+
+def resnet101_retinanet(num_classes, inputs=None, **kwargs):
+    return resnet_retinanet(num_classes=num_classes, backbone='resnet101', inputs=inputs, **kwargs)
+
+
+def resnet152_retinanet(num_classes, inputs=None, **kwargs):
+    return resnet_retinanet(num_classes=num_classes, backbone='resnet152', inputs=inputs, **kwargs)
+
+
+def ResNet50RetinaNet(inputs, num_classes, **kwargs):
+    warnings.warn("ResNet50RetinaNet is replaced by resnet50_retinanet and will be removed in a future release.")
+    return resnet50_retinanet(num_classes, inputs, *args, **kwargs)
+
+
+def ResNet101RetinaNet(inputs, num_classes, **kwargs):
+    warnings.warn("ResNet101RetinaNet is replaced by resnet101_retinanet and will be removed in a future release.")
+    return resnet101_retinanet(num_classes, inputs, *args, **kwargs)
+
+
+def ResNet152RetinaNet(inputs, num_classes, **kwargs):
+    warnings.warn("ResNet152RetinaNet is replaced by resnet152_retinanet and will be removed in a future release.")
+    return resnet152_retinanet(num_classes, inputs, *args, **kwargs)

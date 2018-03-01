@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from keras_retinanet.preprocessing.generator import Generator
+from ..preprocessing.generator import Generator
+from ..utils.image import read_image_bgr
 
-import cv2
 import os
 import numpy as np
 
@@ -24,7 +24,7 @@ from pycocotools.coco import COCO
 
 
 class CocoGenerator(Generator):
-    def __init__(self, data_dir, set_name, image_data_generator, *args, **kwargs):
+    def __init__(self, data_dir, set_name, **kwargs):
         self.data_dir  = data_dir
         self.set_name  = set_name
         self.coco      = COCO(os.path.join(data_dir, 'annotations', 'instances_' + set_name + '.json'))
@@ -32,7 +32,7 @@ class CocoGenerator(Generator):
 
         self.load_classes()
 
-        super(CocoGenerator, self).__init__(image_data_generator, **kwargs)
+        super(CocoGenerator, self).__init__(**kwargs)
 
     def load_classes(self):
         # load class names (name -> label)
@@ -78,9 +78,9 @@ class CocoGenerator(Generator):
         return float(image['width']) / float(image['height'])
 
     def load_image(self, image_index):
-        image = self.coco.loadImgs(self.image_ids[image_index])[0]
-        path  = os.path.join(self.data_dir, 'images', self.set_name, image['file_name'])
-        return cv2.imread(path)
+        image_info = self.coco.loadImgs(self.image_ids[image_index])[0]
+        path       = os.path.join(self.data_dir, 'images', self.set_name, image_info['file_name'])
+        return read_image_bgr(path)
 
     def load_annotations(self, image_index):
         # get ground truth annotations
@@ -94,6 +94,10 @@ class CocoGenerator(Generator):
         # parse annotations
         coco_annotations = self.coco.loadAnns(annotations_ids)
         for idx, a in enumerate(coco_annotations):
+            # some annotations have basically no width / height, skip them
+            if a['bbox'][2] < 1 or a['bbox'][3] < 1:
+                continue
+
             annotation        = np.zeros((1, 5))
             annotation[0, :4] = a['bbox']
             annotation[0, 4]  = self.coco_label_to_label(a['category_id'])

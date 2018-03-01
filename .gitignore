@@ -1,4 +1,9 @@
 __pycache__/
 *.pyc
+<<<<<<< HEAD
 .idea
 yzbx
+=======
+/.pytest_cache
+/.cache
+>>>>>>> f0bc909a18e1b96ee5cd215edcc59037445cffa8

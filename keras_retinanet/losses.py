@@ -15,36 +15,46 @@ limitations under the License.
 """
 
 import keras
-import keras_retinanet
+from . import backend
 
 
 def focal(alpha=0.25, gamma=2.0):
     def _focal(y_true, y_pred):
-        # discard batches, throw all labels / classifications on one big blob
-        labels         = keras.backend.reshape(y_true, (-1, keras.backend.shape(y_true)[2]))
-        classification = keras.backend.reshape(y_pred, (-1, keras.backend.shape(y_pred)[2]))
+        labels         = y_true
+        classification = y_pred
 
-        # filter out "ignore" anchors
-        anchor_state   = keras.backend.max(labels, axis=1)  # -1 for ignore, 0 for background, 1 for object
-        indices        = keras_retinanet.backend.where(keras.backend.not_equal(anchor_state, -1))
-        classification = keras_retinanet.backend.gather_nd(classification, indices)
-        labels         = keras_retinanet.backend.gather_nd(labels, indices)
-        anchor_state   = keras_retinanet.backend.gather_nd(anchor_state, indices)
+        # compute the divisor: for each image in the batch, we want the number of positive anchors
 
-        # select classification scores for labeled anchors
+        # override the -1 labels, since we treat values -1 and 0 the same way for determining the divisor
+        divisor = backend.where(keras.backend.less_equal(labels, 0), keras.backend.zeros_like(labels), labels)
+        divisor = keras.backend.max(divisor, axis=2, keepdims=True)
+        divisor = keras.backend.cast(divisor, keras.backend.floatx())
+
+        # compute the number of positive anchors
+        divisor = keras.backend.sum(divisor, axis=1, keepdims=True)
+
+        #  ensure we do not divide by 0
+        divisor = keras.backend.maximum(1.0, divisor)
+
+        # compute the focal loss
         alpha_factor = keras.backend.ones_like(labels) * alpha
-        alpha_factor = keras_retinanet.backend.where(keras.backend.equal(labels, 1), alpha_factor, 1 - alpha_factor)
-        focal_weight = keras_retinanet.backend.where(keras.backend.equal(labels, 1), 1 - classification, classification)
+        alpha_factor = backend.where(keras.backend.equal(labels, 1), alpha_factor, 1 - alpha_factor)
+        focal_weight = backend.where(keras.backend.equal(labels, 1), 1 - classification, classification)
         focal_weight = alpha_factor * focal_weight ** gamma
 
         cls_loss = focal_weight * keras.backend.binary_crossentropy(labels, classification)
-        cls_loss = keras.backend.sum(cls_loss)
 
-        # "The total focal loss of an image is computed as the sum
-        # of the focal loss over all ~100k anchors, normalized by the
-        # number of anchors assigned to a ground-truth box."
-        cls_loss = cls_loss / (keras.backend.maximum(1.0, keras.backend.sum(anchor_state)))
-        return cls_loss
+        # normalise by the number of positive anchors for each entry in the minibatch
+        cls_loss = cls_loss / divisor
+
+        # filter out "ignore" anchors
+        anchor_state = keras.backend.max(labels, axis=2)  # -1 for ignore, 0 for background, 1 for object
+        indices      = backend.where(keras.backend.not_equal(anchor_state, -1))
+
+        cls_loss = backend.gather_nd(cls_loss, indices)
+
+        # divide by the size of the minibatch
+        return keras.backend.sum(cls_loss) / keras.backend.cast(keras.backend.shape(labels)[0], keras.backend.floatx())
 
     return _focal
 
@@ -53,30 +63,40 @@ def smooth_l1(sigma=3.0):
     sigma_squared = sigma ** 2
 
     def _smooth_l1(y_true, y_pred):
-        # discard batches, throw all regression / anchor states on one big blob
-        regression        = keras.backend.reshape(y_pred, (-1, 4))
-        regression_target = keras.backend.reshape(y_true[:, :, :4], (-1, 4))
-        anchor_state      = keras.backend.reshape(y_true[:, :, 4], (-1,))
+        # separate target and state
+        regression        = y_pred
+        regression_target = y_true[:, :, :4]
+        anchor_state      = y_true[:, :, 4]
 
-        # filter out "ignore" anchors
-        indices           = keras_retinanet.backend.where(keras.backend.equal(anchor_state, 1))
-        regression        = keras_retinanet.backend.gather_nd(regression, indices)
-        regression_target = keras_retinanet.backend.gather_nd(regression_target, indices)
+        # compute the divisor: for each image in the batch, we want the number of positive and negative anchors
+        divisor = backend.where(keras.backend.equal(anchor_state, 1), keras.backend.ones_like(anchor_state), keras.backend.zeros_like(anchor_state))
+        divisor = keras.backend.sum(divisor, axis=1, keepdims=True)
+        divisor = keras.backend.maximum(1.0, divisor)
+
+        # pad the tensor to have shape (batch_size, 1, 1) for future division
+        divisor   = keras.backend.expand_dims(divisor, axis=2)
 
         # compute smooth L1 loss
         # f(x) = 0.5 * (sigma * x)^2          if |x| < 1 / sigma / sigma
         #        |x| - 0.5 / sigma / sigma    otherwise
         regression_diff = regression - regression_target
         regression_diff = keras.backend.abs(regression_diff)
-        regression_loss = keras_retinanet.backend.where(
+        regression_loss = backend.where(
             keras.backend.less(regression_diff, 1.0 / sigma_squared),
             0.5 * sigma_squared * keras.backend.pow(regression_diff, 2),
             regression_diff - 0.5 / sigma_squared
         )
-        regression_loss = keras.backend.sum(regression_loss)
 
-        divisor         = keras.backend.maximum(keras.backend.shape(indices)[0], 1)
-        divisor         = keras.backend.cast(divisor, keras.backend.floatx())
-        return regression_loss / divisor
+        # normalise by the number of positive and negative anchors for each entry in the minibatch
+        regression_loss = regression_loss / divisor
+
+        # filter out "ignore" anchors
+        indices         = backend.where(keras.backend.equal(anchor_state, 1))
+        regression_loss = backend.gather_nd(regression_loss, indices)
+
+        # divide by the size of the minibatch
+        regression_loss = keras.backend.sum(regression_loss) / keras.backend.cast(keras.backend.shape(y_true)[0], keras.backend.floatx())
+
+        return regression_loss
 
     return _smooth_l1

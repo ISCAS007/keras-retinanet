@@ -22,7 +22,7 @@ import keras.preprocessing.image
 
 import tensorflow as tf
 
-from keras_retinanet.models import ResNet50RetinaNet
+from keras_retinanet.models.resnet import ResNet50RetinaNet
 from keras_retinanet.preprocessing.csv_generator import CSVGenerator
 import keras_retinanet
 
@@ -45,7 +45,7 @@ def parse_args():
     parser.add_argument('--val_path', help='Path to CSV file for validation (optional')
     parser.add_argument('--weights', help='Weights to use for initialization (defaults to ImageNet).',
                         default='imagenet')
-    parser.add_argument('--batch-size', help='Size of the batches.', default=1, type=int)
+    parser.add_argument('--batch_size', help='Size of the batches.', default=1, type=int)
     parser.add_argument('--gpu', help='Id of the GPU to use (as reported by nvidia-smi).')
 
     return parser.parse_args()
@@ -111,7 +111,7 @@ if __name__ == '__main__':
         verbose=1,
         max_queue_size=20,
         validation_data=test_generator,
-        validation_steps=test_generator.size() // args.batch_size if test_generator else: 0,
+        validation_steps=test_generator.size() // args.batch_size if test_generator else 0,
         callbacks=[
             keras.callbacks.ModelCheckpoint(os.path.join('snapshots', 'resnet50_csv_best.h5'), monitor='val_loss', verbose=1, save_best_only=True),
             keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.1, patience=2, verbose=1, mode='auto', epsilon=0.0001, cooldown=0, min_lr=0),

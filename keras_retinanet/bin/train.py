@@ -41,6 +41,7 @@ from ..preprocessing.csv_generator import CSVGenerator
 from ..preprocessing.open_images import OpenImagesGenerator
 from ..utils.transform import random_transform_generator
 from ..utils.keras_version import check_keras_version
+from ..utils.model import freeze as freeze_model
 
 
 def get_session():
@@ -55,14 +56,14 @@ def model_with_weights(model, weights, skip_mismatch):
     return model
 
 
-def create_models(backbone_retinanet, backbone, num_classes, weights, multi_gpu=0):
-    # create "base" model (no NMS)
+def create_models(backbone_retinanet, backbone, num_classes, weights, multi_gpu=0, freeze_backbone=False):
+    modifier = freeze_model if freeze_backbone else None
 
     # Keras recommends initialising a multi-gpu model on the CPU to ease weight sharing, and to prevent OOM errors.
     # optionally wrap in a parallel model
     if multi_gpu > 1:
         with tf.device('/cpu:0'):
-            model = model_with_weights(backbone_retinanet(num_classes, backbone=backbone, nms=False), weights=weights, skip_mismatch=True)
+            model = model_with_weights(backbone_retinanet(num_classes, backbone=backbone, nms=False, modifier=modifier), weights=weights, skip_mismatch=True)
         training_model = multi_gpu_model(model, gpus=multi_gpu)
 
         # append NMS for prediction only
@@ -72,7 +73,7 @@ def create_models(backbone_retinanet, backbone, num_classes, weights, multi_gpu=
         detections       = layers.NonMaximumSuppression(name='nms')([boxes, classification, detections])
         prediction_model = keras.models.Model(inputs=model.inputs, outputs=model.outputs[:2] + [detections])
     else:
-        model            = model_with_weights(backbone_retinanet(num_classes, backbone=backbone, nms=True), weights=weights, skip_mismatch=True)
+        model            = model_with_weights(backbone_retinanet(num_classes, backbone=backbone, nms=True, modifier=modifier), weights=weights, skip_mismatch=True)
         training_model   = model
         prediction_model = model
 
@@ -245,6 +246,9 @@ def check_args(parsed_args):
             "Multi GPU training ({}) and resuming from snapshots ({}) is not supported.".format(parsed_args.multi_gpu,
                                                                                                 parsed_args.snapshot))
 
+    if parsed_args.multi_gpu > 1 and not parsed_args.multi_gpu_force:
+        raise ValueError("Multi-GPU support is experimental, use at own risk! Run with --multi-gpu-force if you wish to continue.")
+
     if 'resnet' in parsed_args.backbone:
         from ..models.resnet import validate_backbone
     elif 'mobilenet' in parsed_args.backbone:
@@ -293,12 +297,14 @@ def parse_args(args):
     parser.add_argument('--batch-size',      help='Size of the batches.', default=1, type=int)
     parser.add_argument('--gpu',             help='Id of the GPU to use (as reported by nvidia-smi).')
     parser.add_argument('--multi-gpu',       help='Number of GPUs to use for parallel processing.', type=int, default=0)
+    parser.add_argument('--multi-gpu-force', help='Extra flag needed to enable (experimental) multi-gpu support.', action='store_true')
     parser.add_argument('--epochs',          help='Number of epochs to train.', type=int, default=50)
     parser.add_argument('--steps',           help='Number of steps per epoch.', type=int, default=10000)
     parser.add_argument('--snapshot-path',   help='Path to store snapshots of models during training (defaults to \'./snapshots\')', default='./snapshots')
     parser.add_argument('--tensorboard-dir', help='Log directory for Tensorboard output', default='./logs')
     parser.add_argument('--no-snapshots',    help='Disable saving snapshots.', dest='snapshots', action='store_false')
     parser.add_argument('--no-evaluation',   help='Disable per epoch evaluation.', dest='evaluation', action='store_false')
+    parser.add_argument('--freeze-backbone', help='Freeze training of backbone layers.', action='store_true')
 
     return check_args(parser.parse_args(args))
 
@@ -340,7 +346,14 @@ def main(args=None):
             weights = download_imagenet(args.backbone)
 
         print('Creating model, this may take a second...')
-        model, training_model, prediction_model = create_models(backbone_retinanet=retinanet, backbone=args.backbone, num_classes=train_generator.num_classes(), weights=weights, multi_gpu=args.multi_gpu)
+        model, training_model, prediction_model = create_models(
+            backbone_retinanet=retinanet,
+            backbone=args.backbone,
+            num_classes=train_generator.num_classes(),
+            weights=weights,
+            multi_gpu=args.multi_gpu,
+            freeze_backbone=args.freeze_backbone
+        )
 
     # print model summary
     print(model.summary())
